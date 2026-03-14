@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>番茄列车物料自助站</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body, #root { width: 100%; min-height: 100vh; }
+  body { background: #0f0f13; }
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useEffect, useCallback } = React;
+
+// ============================================================
+// CONFIG & DATA
+// ============================================================
+const CANVAS_W = 1920;
+const CANVAS_H = 1080;
+const NICKNAME_MAX = 8;
+const TITLE_MAX = 12;
+
+// Embedded template background (train pixel art)
+const TRAIN_BG_SRC = "../assets/templates/TRAIN_BG_SRC.jpg";
+
+const CAMERA_BG_1 = "../assets/templates/CAMERA_BG_1.jpg";
+
+// Original image is 2000x1174. On 1920x1080 canvas, stretched to fit.
+// Avatar in the open blue sky area (right-center upper portion)
+const DEFAULT_TPL = {
+  id: "emp-train",
+  name: "列车员",
+  desc: "像素风列车主题",
+  avatarZone: { x: 600, y: 420, radius: 235 },
+  accent: "#FFD700",
+};
+
+// ============================================================
+// 📋 出镜壁纸管理区（后续维护在这里增删改）
+// ============================================================
+// 每张壁纸格式：
+//   { id: "唯一ID", name: "显示名称", desc: "描述文字", src: 图片变量名, isNew: true/false }
+//
+// 【新增壁纸】复制一行，改 id/name/desc/src，在文件顶部加对应的 const XXX = "data:image/jpeg;base64,...";
+// 【删除壁纸】删掉对应行 + 删掉顶部对应的 const
+// 【改名】直接改 name 和 desc
+// 【排序】调整数组顺序即可，排在前面的显示在前面
+// 【NEW标识】isNew: true 会在卡片右上角显示 NEW 角标
+//
+const PREMADE_WALLPAPERS = [
+  { id: "pm-spring", name: "春日列车员壁纸", desc: "像素风春日列车主题", src: CAMERA_BG_1, isNew: true },
+  // ↓ 后续新增壁纸加在这里，例如：
+  // { id: "pm-summer", name: "夏日列车员壁纸", desc: "夏日清凉主题", src: CAMERA_BG_2, isNew: true },
+];
+
+const STICKERS = [
+  { id: "s1", emoji: "⭐", label: "星星" },
+  { id: "s2", emoji: "🌟", label: "闪星" },
+  { id: "s3", emoji: "💼", label: "公文包" },
+  { id: "s4", emoji: "🎯", label: "靶心" },
+  { id: "s5", emoji: "🚀", label: "火箭" },
+  { id: "s6", emoji: "💡", label: "灯泡" },
+  { id: "s7", emoji: "🏆", label: "奖杯" },
+  { id: "s8", emoji: "🎨", label: "调色盘" },
+  { id: "s9", emoji: "☕", label: "咖啡" },
+  { id: "s10", emoji: "🌈", label: "彩虹" },
+  { id: "s11", emoji: "🎵", label: "音符" },
+  { id: "s12", emoji: "✨", label: "闪光" },
+];
+
+const TRAILING_PUNCT = new Set("，。！？、；：）」》】…—～·,.!?;:)]}~");
+
+function wrapQuoteText(ctx, text, maxWidth) {
+  if (!text) return [];
+  const chars = [...text];
+  const lines = [];
+  let currentLine = "";
+  for (let i = 0; i < chars.length; i++) {
+    const testLine = currentLine + chars[i];
+    const metrics = ctx.measureText(testLine);
+    if (metrics.width > maxWidth && currentLine.length > 0) {
+      if (TRAILING_PUNCT.has(chars[i])) {
+        lines.push(currentLine + chars[i]);
+        currentLine = "";
+        continue;
+      }
+      lines.push(currentLine);
+      currentLine = chars[i];
+    } else {
+      currentLine = testLine;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines;
+}
+
+// ============================================================
+// Draw scene (shared by preview & export)
+// ============================================================
+function drawScene(ctx, tpl, opts) {
+  const { avatarImg, avatarSrc, avatarScale, avatarOffsetX, avatarOffsetY, userName, userTitle, userQuote, textColor, placedStickers, trainBgImg } = opts;
+
+  // 1. Background
+  if (trainBgImg) {
+    ctx.drawImage(trainBgImg, 0, 0, CANVAS_W, CANVAS_H);
+  } else {
+    const grad = ctx.createLinearGradient(0, 0, CANVAS_W, CANVAS_H);
+    grad.addColorStop(0, "#0088ff");
+    grad.addColorStop(1, "#00aaff");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  }
+
+  // 2. Avatar
+  if (avatarImg && avatarSrc) {
+    const az = tpl.avatarZone;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(az.x, az.y, az.radius, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    const imgAspect = avatarImg.width / avatarImg.height;
+    const drawSize = az.radius * 2 * avatarScale;
+    let dw, dh;
+    if (imgAspect > 1) { dh = drawSize; dw = drawSize * imgAspect; }
+    else { dw = drawSize; dh = drawSize / imgAspect; }
+    const dx = az.x - dw / 2 + avatarOffsetX;
+    const dy = az.y - dh / 2 + avatarOffsetY;
+    ctx.drawImage(avatarImg, dx, dy, dw, dh);
+    ctx.restore();
+    // Border
+    ctx.strokeStyle = tpl.accent || "#FFD700";
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.arc(az.x, az.y, az.radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 3. Text — vertically centered with avatar
+  const az2 = tpl.avatarZone;
+  ctx.font = "bold 91px sans-serif";
+  const nicknameCharW = ctx.measureText("\u6d4b").width;
+  const textX = az2.x + az2.radius + nicknameCharW;
+  ctx.textAlign = "left";
+  ctx.fillStyle = textColor;
+
+  // Pre-calculate total text block height to vertically center with avatar
+  let totalTextH = 0;
+  let quoteLineCount = 0;
+  if (userName) totalTextH += 91; // nickname font size as line height
+  if (userTitle) { if (userName) totalTextH += 30; totalTextH += 60; } // gap + title
+  if (userQuote) {
+    if (userName || userTitle) totalTextH += 30; // gap before quote
+    ctx.save();
+    ctx.font = "60px sans-serif";
+    const mw = ctx.measureText("\u6d4b".repeat(TITLE_MAX)).width;
+    ctx.restore();
+    ctx.font = "italic 50px sans-serif";
+    const ql = wrapQuoteText(ctx, userQuote, mw);
+    quoteLineCount = ql.length;
+    totalTextH += quoteLineCount * 71;
+  }
+  // textBaseY: start so that the text block is vertically centered on az2.y
+  const textBaseY = az2.y - totalTextH / 2;
+
+  let yOff = 0;
+  if (userName) {
+    ctx.font = "bold 91px sans-serif";
+    ctx.fillText(userName, textX, textBaseY + yOff + 91);
+    yOff += 91 + 30; // line height + gap
+  }
+  if (userTitle) {
+    ctx.font = "60px sans-serif";
+    ctx.fillText(userTitle, textX, textBaseY + yOff + 60);
+    yOff += 60 + 30;
+  }
+  if (userQuote) {
+    ctx.font = "italic 50px sans-serif";
+    ctx.globalAlpha = 0.85;
+    ctx.save();
+    ctx.font = "60px sans-serif";
+    const titleMaxW = ctx.measureText("\u6d4b".repeat(TITLE_MAX)).width;
+    ctx.restore();
+    ctx.font = "italic 50px sans-serif";
+    const lines = wrapQuoteText(ctx, userQuote, titleMaxW);
+    lines.forEach((line, idx) => {
+      ctx.fillText(line, textX, textBaseY + yOff + 50 + idx * 71);
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  // 4. Stickers
+  placedStickers.forEach((s) => {
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate((s.rotation || 0) * Math.PI / 180);
+    ctx.font = `${s.size || 48}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(s.emoji, 0, 0);
+    ctx.restore();
+  });
+}
+
+// ============================================================
+// MAIN APP
+// ============================================================
+function WallpaperMaker() {
+  // flow: null=home, "ask"=出镜选择, "camera"=出镜下载, "edit"=编辑壁纸
+  const [flow, setFlow] = useState(null);
+  const [selectedTpl, setSelectedTpl] = useState(null);
+
+  const [avatarSrc, setAvatarSrc] = useState(null);
+  const [avatarScale, setAvatarScale] = useState(1);
+  const [avatarOffsetX, setAvatarOffsetX] = useState(0);
+  const [avatarOffsetY, setAvatarOffsetY] = useState(0);
+
+  const [userName, setUserName] = useState("");
+  const [userTitle, setUserTitle] = useState("");
+  const [userQuote, setUserQuote] = useState("");
+  const [textColor, setTextColor] = useState("#ffffff");
+
+  const [placedStickers, setPlacedStickers] = useState([]);
+  const [draggingSticker, setDraggingSticker] = useState(null);
+  const [previewPm, setPreviewPm] = useState(null);
+
+  const canvasRef = useRef(null);
+  const previewRef = useRef(null);
+  const stickyRef = useRef(null);
+  const mainPreviewContainerRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const avatarImgRef = useRef(null);
+  const trainBgImgRef = useRef(null);
+  const composingRef = useRef(false);
+  const [bgLoaded, setBgLoaded] = useState(false);
+  const [showSticky, setShowSticky] = useState(false);
+
+  // Load embedded train background
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => { trainBgImgRef.current = img; setBgLoaded(true); };
+    img.onerror = () => { console.error("Failed to load bg"); setBgLoaded(true); };
+    img.src = TRAIN_BG_SRC;
+  }, []);
+
+  const getDrawOpts = useCallback(() => ({
+    avatarImg: avatarImgRef.current,
+    avatarSrc, avatarScale, avatarOffsetX, avatarOffsetY,
+    userName, userTitle, userQuote, textColor, placedStickers,
+    trainBgImg: trainBgImgRef.current,
+  }), [avatarSrc, avatarScale, avatarOffsetX, avatarOffsetY, userName, userTitle, userQuote, textColor, placedStickers]);
+
+  const handleAvatarUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        avatarImgRef.current = img;
+        setAvatarSrc(ev.target.result);
+        setAvatarScale(1);
+        setAvatarOffsetX(0);
+        setAvatarOffsetY(0);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Observe main preview going out of view → show sticky
+  useEffect(() => {
+    if (flow !== "edit" || !mainPreviewContainerRef.current) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setShowSticky(!entry.isIntersecting),
+      { threshold: 0.1 }
+    );
+    observer.observe(mainPreviewContainerRef.current);
+    return () => observer.disconnect();
+  }, [flow]);
+
+  const renderPreview = useCallback(() => {
+    const canvases = [previewRef.current, stickyRef.current].filter(Boolean);
+    if (!selectedTpl || canvases.length === 0) return;
+    canvases.forEach(canvas => {
+      const container = canvas.parentElement;
+      if (!container) return;
+      const w = container.clientWidth;
+      const h = (w * CANVAS_H) / CANVAS_W;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      canvas.style.width = w + "px";
+      canvas.style.height = h + "px";
+      const scale = canvas.width / CANVAS_W;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.scale(scale, scale);
+      drawScene(ctx, selectedTpl, getDrawOpts());
+      ctx.restore();
+    });
+  }, [selectedTpl, getDrawOpts]);
+
+  useEffect(() => {
+    if (flow === "edit") renderPreview();
+  }, [renderPreview, flow, bgLoaded, showSticky]);
+
+  const handleExport = () => {
+    try {
+      const c = document.createElement("canvas");
+      c.width = CANVAS_W;
+      c.height = CANVAS_H;
+      const ctx = c.getContext("2d");
+      drawScene(ctx, selectedTpl, getDrawOpts());
+      const dataUrl = c.toDataURL("image/png");
+      const w = window.open();
+      if (w) {
+        w.document.write(`<html><head><title>\u4f1a\u8bae\u58c1\u7eb8</title><style>body{margin:0;background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;color:#fff}img{max-width:90vw;max-height:80vh;border-radius:8px;box-shadow:0 4px 30px rgba(0,0,0,0.5)}p{margin-top:16px;color:#aaa;font-size:14px}a{display:inline-block;margin-top:12px;padding:10px 24px;background:#4a90d9;color:#fff;border-radius:8px;text-decoration:none;font-weight:600}</style></head><body><img src="${dataUrl}" /><p>右键图片另存为，或点击下方按钮保存</p><a href="${dataUrl}" download="会议壁纸_${userName||"wallpaper"}_${CANVAS_W}x${CANVAS_H}.png">💾 保存图片</a></body></html>`);
+        w.document.close();
+      } else {
+        const link = document.createElement("a");
+        link.download = `会议壁纸_${userName||"wallpaper"}_${CANVAS_W}x${CANVAS_H}.png`;
+        link.href = dataUrl;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (err) { alert("导出失败: " + err.message); }
+  };
+
+  // Sticker interactions
+  const handlePreviewMouseDown = (e) => {
+    const rect = previewRef.current.getBoundingClientRect();
+    const sr = CANVAS_W / rect.width;
+    const mx = (e.clientX - rect.left) * sr;
+    const my = (e.clientY - rect.top) * sr;
+    for (let i = placedStickers.length - 1; i >= 0; i--) {
+      const s = placedStickers[i];
+      if (Math.hypot(mx - s.x, my - s.y) < (s.size || 48)) {
+        setDraggingSticker({ index: i, offsetX: mx - s.x, offsetY: my - s.y });
+        return;
+      }
+    }
+  };
+  const handlePreviewMouseMove = (e) => {
+    if (!draggingSticker) return;
+    const rect = previewRef.current.getBoundingClientRect();
+    const sr = CANVAS_W / rect.width;
+    const mx = (e.clientX - rect.left) * sr;
+    const my = (e.clientY - rect.top) * sr;
+    setPlacedStickers((prev) => {
+      const next = [...prev];
+      next[draggingSticker.index] = { ...next[draggingSticker.index], x: mx - draggingSticker.offsetX, y: my - draggingSticker.offsetY };
+      return next;
+    });
+  };
+  const handlePreviewMouseUp = () => setDraggingSticker(null);
+  const addSticker = (sticker) => {
+    setPlacedStickers((prev) => [...prev, { ...sticker, x: CANVAS_W / 2 + (Math.random() - 0.5) * 200, y: CANVAS_H / 2 + (Math.random() - 0.5) * 200, size: 48, rotation: 0 }]);
+  };
+  const removeSticker = (i) => setPlacedStickers((prev) => prev.filter((_, idx) => idx !== i));
+  const updateSticker = (i, upd) => {
+    setPlacedStickers((prev) => { const n = [...prev]; n[i] = { ...n[i], ...upd }; return n; });
+  };
+
+  // helper for IME-safe input
+  const imeInput = (setter, max) => ({
+    onCompositionStart: () => { composingRef.current = true; },
+    onCompositionEnd: (e) => { composingRef.current = false; setter(e.target.value.slice(0, max)); },
+    onChange: (e) => { if (!composingRef.current) { setter(e.target.value.slice(0, max)); } else { setter(e.target.value); } },
+  });
+
+  // ============================================================
+  // RENDER
+  // ============================================================
+
+  const S = styles; // alias
+
+  // ---- HOME: 列车员入口 ----
+  if (!flow) {
+    return (
+      <div style={S.page}>
+        <div style={S.center}>
+          <h1 style={S.h1}>番茄列车物料自助站</h1>
+          <p style={S.sub}>点击下方按钮开始制作个性化会议壁纸</p>
+          <div style={S.cards}>
+            <button style={S.card} onClick={() => setFlow("ask")}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>🚂</div>
+              <div style={S.cardT}>列车员入口</div>
+              <div style={S.cardD}></div>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- ASK: 今天是否出镜？ ----
+  if (flow === "ask") {
+    return (
+      <div style={S.page}>
+        <div style={{ ...S.center, padding:"24px 24px 40px" }}>
+          <div style={{ width:"100%", maxWidth:560, margin:"0 auto", display:"flex", flexDirection:"column", alignItems:"center" }}>
+            <div style={{ alignSelf:"flex-start", marginBottom:20 }}>
+              <button style={S.back} onClick={() => setFlow(null)}>← 返回首页</button>
+            </div>
+            <h1 style={{ ...S.h1, fontSize:"min(30px, 7vw)" }}>今天是否出镜？</h1>
+            <p style={{ ...S.sub, fontSize:"min(14px, 3.5vw)", marginBottom:32 }}>选择是否需要在壁纸中展示个人头像和信息</p>
+            <div style={{ ...S.cards, gap:20, width:"100%" }}>
+              <button style={{ ...S.card, width:"100%", maxWidth:200, padding:"28px 24px" }} onClick={() => { setFlow("camera"); }}>
+                <div style={{ fontSize: 38, marginBottom: 12 }}>📸</div>
+                <div style={{ ...S.cardT, fontSize:18 }}>出镜</div>
+                <div style={{ ...S.cardD, fontSize:12 }}>选择现成壁纸直接下载</div>
+              </button>
+              <button style={{ ...S.card, width:"100%", maxWidth:200, padding:"28px 24px" }} onClick={() => { setSelectedTpl(DEFAULT_TPL); setFlow("edit"); setPlacedStickers([]); }}>
+                <div style={{ fontSize: 38, marginBottom: 12 }}>🎨</div>
+                <div style={{ ...S.cardT, fontSize:18 }}>不出镜</div>
+                <div style={{ ...S.cardD, fontSize:12 }}>自定义头像、文字和贴纸</div>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- CAMERA: 出镜 — 选择已有壁纸下载 ----
+  if (flow === "camera") {
+
+    return (
+      <div style={S.page}>
+        <div style={S.wrap}>
+          <div style={S.hdr}>
+            <button style={S.back} onClick={() => setFlow("ask")}>← 返回</button>
+            <h2 style={S.h2}>📸 出镜壁纸 — 选择并下载</h2>
+          </div>
+          <div style={S.tplGrid}>
+            {PREMADE_WALLPAPERS.map(pm => (
+              <div key={pm.id} style={S.tplCard}>
+                <div style={{ width:"100%", aspectRatio:"16/9", position:"relative", overflow:"hidden", background:"#0088ff", borderRadius:"10px 10px 0 0" }}>
+                  <img src={pm.src} alt={pm.name} style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+                  {pm.isNew && (
+                    <div style={{ position:"absolute", top:12, right:12, background:"linear-gradient(135deg,#ef4444,#f97316)", color:"#fff", fontSize:11, fontWeight:700, padding:"3px 10px", borderRadius:20, letterSpacing:1, boxShadow:"0 2px 8px rgba(239,68,68,0.4)" }}>NEW</div>
+                  )}
+                </div>
+                <div style={{ padding:"16px 20px 20px" }}>
+                  <div style={{ fontSize:18, fontWeight:600 }}>{pm.name}</div>
+                  <div style={{ fontSize:13, color:"#8b8b9e", marginTop:4 }}>{pm.desc}</div>
+                  <button style={{ ...S.btn, width:"100%", marginTop:12, background:"linear-gradient(135deg,#22c55e,#16a34a)" }}
+                    onClick={() => setPreviewPm(pm)}>
+                    📥 下载此壁纸
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          {/* Full-screen preview overlay for saving */}
+          {previewPm && (
+            <div style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,0,0,0.85)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:20 }}
+              onClick={() => setPreviewPm(null)}>
+              <div style={{ color:"#fff", fontSize:16, marginBottom:16, textAlign:"center" }}>
+                📱 长按图片保存 &nbsp;/&nbsp; 🖥️ 右键图片另存为
+              </div>
+              <img src={previewPm.src} alt={previewPm.name}
+                style={{ maxWidth:"90vw", maxHeight:"75vh", borderRadius:8, boxShadow:"0 4px 30px rgba(0,0,0,0.6)" }}
+                onClick={(e) => e.stopPropagation()} />
+              <button style={{ marginTop:20, padding:"10px 32px", background:"rgba(255,255,255,0.1)", border:"1px solid rgba(255,255,255,0.2)", borderRadius:8, color:"#fff", cursor:"pointer", fontSize:14 }}
+                onClick={() => setPreviewPm(null)}>
+                ✕ 关闭
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ---- EDIT: 不出镜 — 编辑壁纸 ----
+  if (flow === "edit") {
+    return (
+      <div style={S.page}>
+        <div style={{ padding:"24px 24px 40px", maxWidth:1400, margin:"0 auto" }}>
+          <div style={S.hdr}>
+            <button style={S.back} onClick={() => setFlow("ask")}>← 返回</button>
+            <h2 style={S.h2}>🎨 编辑壁纸 — {selectedTpl.name}</h2>
+            <button style={S.expBtn} onClick={handleExport}>📥 导出壁纸 (1920×1080)</button>
+          </div>
+          {/* Sticky mini-preview for mobile: appears when main canvas scrolls out */}
+          {showSticky && (
+            <div style={{ position:"sticky", top:0, zIndex:100, background:"rgba(15,15,19,0.95)", borderBottom:"1px solid rgba(255,255,255,0.08)", padding:"8px 0", marginBottom:16, backdropFilter:"blur(8px)" }}
+              onClick={() => mainPreviewContainerRef.current?.scrollIntoView({ behavior:"smooth" })}>
+              <div style={{ maxWidth:360, margin:"0 auto" }}>
+                <canvas ref={stickyRef} style={{ width:"100%", borderRadius:6, display:"block", cursor:"pointer" }} />
+                <p style={{ fontSize:11, color:"#666", textAlign:"center", marginTop:4 }}>👆 点击返回预览区</p>
+              </div>
+            </div>
+          )}
+          <div style={{ display:"flex", gap:24, alignItems:"flex-start", flexWrap:"wrap" }}>
+            {/* Preview */}
+            <div ref={mainPreviewContainerRef} style={{ flex:"1 1 600px", minWidth:0 }}>
+              <canvas ref={previewRef} style={{ width:"100%", borderRadius:10, border:"1px solid rgba(255,255,255,0.08)", cursor:"grab", display:"block" }}
+                onMouseDown={handlePreviewMouseDown} onMouseMove={handlePreviewMouseMove}
+                onMouseUp={handlePreviewMouseUp} onMouseLeave={handlePreviewMouseUp} />
+              <p style={{ fontSize:12, color:"#666", textAlign:"center", marginTop:8 }}>💡 贴纸可在预览区直接拖动</p>
+            </div>
+            {/* Controls */}
+            <div style={{ flex:"0 0 340px", display:"flex", flexDirection:"column", gap:20 }}>
+              {/* Avatar */}
+              <div style={S.sec}>
+                <h3 style={S.secH}>📷 头像</h3>
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAvatarUpload} style={{ display:"none" }} />
+                <button style={S.upload} onClick={() => fileInputRef.current.click()}>
+                  {avatarSrc ? "更换头像" : "上传头像"}
+                </button>
+                {avatarSrc && (
+                  <div style={{ marginTop:14, display:"flex", flexDirection:"column", gap:10 }}>
+                    <label style={S.lbl}>缩放 <input type="range" min="0.5" max="3" step="0.05" value={avatarScale} onChange={e => setAvatarScale(parseFloat(e.target.value))} style={S.rng} /></label>
+                    <label style={S.lbl}>左右 <input type="range" min="-200" max="200" step="1" value={avatarOffsetX} onChange={e => setAvatarOffsetX(parseInt(e.target.value))} style={S.rng} /></label>
+                    <label style={S.lbl}>上下 <input type="range" min="-200" max="200" step="1" value={avatarOffsetY} onChange={e => setAvatarOffsetY(parseInt(e.target.value))} style={S.rng} /></label>
+                  </div>
+                )}
+              </div>
+              {/* Text */}
+              <div style={S.sec}>
+                <h3 style={S.secH}>✏️ 文字信息</h3>
+                <div style={{ marginBottom:14 }}>
+                  <div style={S.fldL}>昵称 <span style={S.fldH}>你希望乘客们怎么称呼你</span></div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <input style={S.inp} value={userName} {...imeInput(setUserName, NICKNAME_MAX)} />
+                    <span style={{ fontSize:12, color: userName.length >= NICKNAME_MAX ? "#ef4444" : "#666", minWidth:36, textAlign:"right" }}>{userName.length}/{NICKNAME_MAX}</span>
+                  </div>
+                </div>
+                <div style={{ marginBottom:14 }}>
+                  <div style={S.fldL}>列车员定位 <span style={S.fldH}>你的魅力是？</span></div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <input style={S.inp} value={userTitle} {...imeInput(setUserTitle, TITLE_MAX)} />
+                    <span style={{ fontSize:12, color: userTitle.length >= TITLE_MAX ? "#ef4444" : "#666", minWidth:36, textAlign:"right" }}>{userTitle.length}/{TITLE_MAX}</span>
+                  </div>
+                </div>
+                <div style={{ marginBottom:14 }}>
+                  <div style={S.fldL}>个性签名 <span style={S.fldH}>想要对乘客说什么？</span></div>
+                  <textarea style={{ ...S.inp, minHeight:64, resize:"vertical", lineHeight:"1.6" }}
+                    value={userQuote} onChange={e => setUserQuote(e.target.value)} />
+                </div>
+                <label style={S.lbl}>文字颜色 <input type="color" value={textColor} onChange={e => setTextColor(e.target.value)} style={{ width:36, height:28, border:"none", background:"none", cursor:"pointer", padding:0 }} /></label>
+              </div>
+              {/* Stickers */}
+              <div style={S.sec}>
+                <h3 style={S.secH}>🎨 贴纸装饰</h3>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:6 }}>
+                  {STICKERS.map(s => (
+                    <button key={s.id} style={S.stk} onClick={() => addSticker(s)} title={s.label}>{s.emoji}</button>
+                  ))}
+                </div>
+                {placedStickers.length > 0 && (
+                  <div style={{ marginTop:14 }}>
+                    <div style={{ fontSize:13, color:"#999", marginBottom:8 }}>已添加的贴纸：</div>
+                    {placedStickers.map((s, i) => (
+                      <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                        <span style={{ fontSize:20, minWidth:28 }}>{s.emoji}</span>
+                        <div style={{ display:"flex", flexDirection:"column", gap:4, flex:1 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                            <span style={S.ml}>左右</span>
+                            <input type="range" min="0" max={CANVAS_W} value={Math.round(s.x)} onChange={e=>updateSticker(i,{x:parseInt(e.target.value)})} style={{...S.rng,flex:1}} />
+                          </div>
+                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                            <span style={S.ml}>上下</span>
+                            <input type="range" min="0" max={CANVAS_H} value={Math.round(s.y)} onChange={e=>updateSticker(i,{y:parseInt(e.target.value)})} style={{...S.rng,flex:1}} />
+                          </div>
+                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                            <span style={S.ml}>大小</span>
+                            <input type="range" min="24" max="120" value={s.size||48} onChange={e=>updateSticker(i,{size:parseInt(e.target.value)})} style={{...S.rng,flex:1}} />
+                            <span style={{...S.ml,width:28,textAlign:"right"}}>{s.size||48}</span>
+                          </div>
+                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                            <span style={S.ml}>旋转</span>
+                            <input type="range" min="-180" max="180" step="5" value={s.rotation||0} onChange={e=>updateSticker(i,{rotation:parseInt(e.target.value)})} style={{...S.rng,flex:1}} />
+                            <span style={{...S.ml,width:28,textAlign:"right"}}>{s.rotation||0}°</span>
+                          </div>
+                        </div>
+                        <button style={{ background:"rgba(239,68,68,0.15)", color:"#ef4444", border:"none", borderRadius:6, padding:"4px 8px", cursor:"pointer", fontSize:12 }} onClick={() => removeSticker(i)}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+        <canvas ref={canvasRef} style={{ display:"none" }} />
+      </div>
+    );
+  }
+  return null;
+}
+
+// ============================================================
+// STYLES
+// ============================================================
+const styles = {
+  page: { minHeight:"100vh", background:"#0f0f13", color:"#e8e8ec", fontFamily:"'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif", padding:0, margin:0 },
+  center: { display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:40 },
+  h1: { fontSize:42, fontWeight:700, margin:0, letterSpacing:-1, background:"linear-gradient(135deg,#e8e8ec,#8b8b9e)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" },
+  sub: { fontSize:16, color:"#8b8b9e", marginTop:12, marginBottom:48 },
+  cards: { display:"flex", gap:32, flexWrap:"wrap", justifyContent:"center" },
+  card: { width:240, padding:"40px 32px", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:16, cursor:"pointer", color:"#e8e8ec", textAlign:"center", transition:"all 0.25s ease", boxShadow:"0 4px 20px rgba(0,0,0,0.2)" },
+  cardT: { fontSize:22, fontWeight:600, marginBottom:8 },
+  cardD: { fontSize:14, color:"#8b8b9e" },
+  wrap: { maxWidth:1100, margin:"0 auto", padding:"32px 24px" },
+  hdr: { display:"flex", alignItems:"center", gap:16, marginBottom:28, flexWrap:"wrap" },
+  back: { background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", color:"#ccc", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:14 },
+  h2: { fontSize:22, fontWeight:600, margin:0, flex:1 },
+  tplGrid: { display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))", gap:24 },
+  tplCard: { background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:14, overflow:"hidden" },
+  btn: { background:"linear-gradient(135deg,#4a90d9,#6366f1)", color:"#fff", border:"none", padding:"10px 20px", borderRadius:8, cursor:"pointer", fontSize:14, fontWeight:600 },
+  expBtn: { background:"linear-gradient(135deg,#22c55e,#16a34a)", color:"#fff", border:"none", padding:"10px 20px", borderRadius:8, cursor:"pointer", fontSize:14, fontWeight:600, marginLeft:"auto" },
+  sec: { background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:12, padding:20 },
+  secH: { fontSize:16, fontWeight:600, margin:"0 0 14px 0" },
+  upload: { width:"100%", padding:"12px", background:"rgba(74,144,217,0.15)", border:"1px dashed rgba(74,144,217,0.4)", borderRadius:8, color:"#4a90d9", cursor:"pointer", fontSize:14 },
+  lbl: { fontSize:13, color:"#aaa", display:"flex", alignItems:"center", justifyContent:"space-between", gap:12 },
+  rng: { flex:1, accentColor:"#4a90d9", height:4 },
+  inp: { width:"100%", padding:"10px 12px", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#e8e8ec", fontSize:14, outline:"none", boxSizing:"border-box" },
+  fldL: { fontSize:14, fontWeight:600, color:"#d0d0d8", marginBottom:6 },
+  fldH: { fontSize:12, fontWeight:400, color:"#777", marginLeft:6 },
+  stk: { fontSize:24, background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:8, padding:"8px 0", cursor:"pointer" },
+  ml: { fontSize:11, color:"#777", whiteSpace:"nowrap", minWidth:24 },
+};
+
+
+ReactDOM.createRoot(document.getElementById("root")).render(<WallpaperMaker />);
+</script>
+</body>
+</html>

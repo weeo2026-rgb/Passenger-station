@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>番茄列车乘客物料自助站</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#0070E0;min-height:100vh}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.3);border-radius:3px}
+textarea:focus{border-color:rgba(255,215,0,.6)!important}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+window.__ASSETS__={
+  tpl1: "../assets/templates/tpl1.jpg",
+  logo: "../assets/logo/logo.png"
+};
+window.__STICKERS__={
+  s180: "../assets/stickers/s180.png",
+  s181: "../assets/stickers/s181.png",
+  s182: "../assets/stickers/s182.png",
+  s183: "../assets/stickers/s183.png",
+  s184: "../assets/stickers/s184.png",
+  s185: "../assets/stickers/s185.png",
+  s186: "../assets/stickers/s186.png",
+  s187: "../assets/stickers/s187.png",
+  s188: "../assets/stickers/s188.png",
+  s189: "../assets/stickers/s189.png"
+};
+</script>
+<script>
+window.onload=function(){
+if(typeof React==="undefined"){document.getElementById("root").innerHTML='<p style="color:#fff;text-align:center;padding:40px">React \u52a0\u8f7d\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc</p>';return;}
+/* ═══════════════════════════════════════════════════════════════
+ * 番茄列车乘客物料自助站 — 乘客版
+ * 单HTML文件 React 18 应用（无Babel，纯 createElement）
+ * ═══════════════════════════════════════════════════════════════ */
+
+var h = React.createElement;
+var useState = React.useState;
+var useRef = React.useRef;
+var useEffect = React.useEffect;
+var useCallback = React.useCallback;
+
+/* ── 1. 配置区 ── */
+
+var TEMPLATES = [
+  {
+    id: "tpl1",
+    name: "像素列车·日常版",
+    src: window.__ASSETS__.tpl1,
+    canvasW: 2000,
+    canvasH: 1173,
+    fields: [
+      { id: "todo",     label: "今日待办", x: 194,  y: 230, w: 882, h: 560, fontSize: 40, lineHeight: 1.6, maxChars: 200 },
+      { id: "attitude", label: "乘车态度", x: 1290, y: 215, w: 580, h: 100, fontSize: 40, lineHeight: 1.5, maxChars: 14  },
+      { id: "nourish",  label: "滋养清单", x: 1290, y: 495, w: 580, h: 270, fontSize: 40, lineHeight: 1.5, maxChars: 56  }
+    ]
+  }
+];
+
+var STICKERS = [
+  { id: "s180", label: "委屈", src: window.__STICKERS__.s180 },
+  { id: "s181", label: "冲鸭", src: window.__STICKERS__.s181 },
+  { id: "s182", label: "嘟嘟", src: window.__STICKERS__.s182 },
+  { id: "s183", label: "淡定", src: window.__STICKERS__.s183 },
+  { id: "s184", label: "晕倒", src: window.__STICKERS__.s184 },
+  { id: "s185", label: "开心", src: window.__STICKERS__.s185 },
+  { id: "s186", label: "无语", src: window.__STICKERS__.s186 },
+  { id: "s187", label: "疑惑", src: window.__STICKERS__.s187 },
+  { id: "s188", label: "大哭", src: window.__STICKERS__.s188 },
+  { id: "s189", label: "傲娇", src: window.__STICKERS__.s189 }
+];
+
+var TEXT_COLORS = [
+  { id: "white",  label: "白",   value: "#FFFFFF" },
+  { id: "dark",   label: "深蓝", value: "#0A3060" },
+  { id: "yellow", label: "奶黄", value: "#FFF8DC" },
+  { id: "cream",  label: "米白", value: "#FAF0E6" }
+];
+
+var FONT_WEIGHTS = [
+  { id: "normal", label: "常规", value: "400" },
+  { id: "bold",   label: "粗",   value: "700" },
+  { id: "heavy",  label: "特粗", value: "900" }
+];
+
+var FONT_FAMILY = '"PingFang SC","Microsoft YaHei",sans-serif';
+var DEFAULT_STICKER_SIZE = 200;
+
+/* ── 2. 辅助函数 ── */
+
+/** 中文自动换行（支持emoji，处理标点禁则） */
+function wrapText(ctx, text, maxWidth) {
+  var lines = [];
+  var paragraphs = text.split("\n");
+  var NO_START = "\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a\uff09\u300b\u300d\u300f\u3011\u2026\u2014~\u00b7,.!?;:)>]}";
+  for (var p = 0; p < paragraphs.length; p++) {
+    var para = paragraphs[p];
+    if (para.trim() === "") { lines.push(""); continue; }
+    var chars = Array.from(para);
+    var line = "";
+    for (var i = 0; i < chars.length; i++) {
+      var testLine = line + chars[i];
+      if (ctx.measureText(testLine).width > maxWidth && line.length > 0) {
+        if (i + 1 < chars.length && NO_START.indexOf(chars[i + 1]) !== -1) {
+          line = testLine;
+          continue;
+        }
+        lines.push(line);
+        line = chars[i];
+      } else {
+        line = testLine;
+      }
+    }
+    if (line) lines.push(line);
+  }
+  return lines;
+}
+
+/** 绘制底图 + 文字（不含贴纸） */
+function drawBase(ctx, tpl, fieldValues, textColor, fontWeight) {
+  return new Promise(function (resolve) {
+    var img = new Image();
+    img.onload = function () {
+      ctx.clearRect(0, 0, tpl.canvasW, tpl.canvasH);
+      ctx.drawImage(img, 0, 0, tpl.canvasW, tpl.canvasH);
+      for (var f = 0; f < tpl.fields.length; f++) {
+        var field = tpl.fields[f];
+        var text = fieldValues[field.id] || "";
+        if (!text.trim()) continue;
+        ctx.save();
+        ctx.fillStyle = textColor;
+        ctx.font = fontWeight + " " + field.fontSize + "px " + FONT_FAMILY;
+        ctx.textBaseline = "top";
+        var fLines = wrapText(ctx, text, field.w);
+        var lineH = field.fontSize * field.lineHeight;
+        var drawY = field.y;
+        for (var li = 0; li < fLines.length; li++) {
+          if (drawY + field.fontSize > field.y + field.h) break;
+          ctx.fillText(fLines[li], field.x, drawY);
+          drawY += lineH;
+        }
+        ctx.restore();
+      }
+      resolve();
+    };
+    img.onerror = function () { resolve(); };
+    img.src = tpl.src;
+  });
+}
+
+/** 在Canvas上绘制所有贴纸（用于导出） */
+function drawStickersOnCanvas(ctx, placedStickers) {
+  var promises = [];
+  for (var s = 0; s < placedStickers.length; s++) {
+    (function (st) {
+      var p = new Promise(function (resolve) {
+        if (!st.src) { resolve(); return; }
+        var img = new Image();
+        img.onload = function () {
+          ctx.save();
+          ctx.translate(st.x, st.y);
+          ctx.rotate((st.rotation || 0) * Math.PI / 180);
+          var sz = st.size || DEFAULT_STICKER_SIZE;
+          var ratio = img.height / img.width;
+          ctx.drawImage(img, -sz / 2, -sz * ratio / 2, sz, sz * ratio);
+          ctx.restore();
+          resolve();
+        };
+        img.onerror = function () { resolve(); };
+        img.src = st.src;
+      });
+      promises.push(p);
+    })(placedStickers[s]);
+  }
+  return Promise.all(promises);
+}
+
+/* ── 3. 样式 ── */
+
+var S = {
+  /* 页面 */
+  page:           { minHeight: "100vh", background: "linear-gradient(180deg,#0060D0 0%,#0080F0 50%,#40A0FF 100%)", color: "#fff", paddingBottom: 40 },
+  /* 首页 */
+  homeWrap:       { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, textAlign: "center" },
+  logoArea:       { marginBottom: 40 },
+  logoImg:        { width: 160, height: "auto", display: "block", margin: "0 auto 12px" },
+  homeTitle:      { fontSize: 36, fontWeight: 800, letterSpacing: 4, margin: 0 },
+  homeDesc:       { fontSize: 14, marginTop: 16, opacity: 0.7 },
+  enterBtn:       { background: "#FFD700", color: "#1a1a2e", border: "none", borderRadius: 16, padding: "16px 48px", fontSize: 20, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 20px rgba(255,215,0,0.4)" },
+  /* 编辑器顶栏 */
+  topBar:         { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", position: "sticky", top: 0, zIndex: 90, background: "rgba(0,80,200,0.9)", backdropFilter: "blur(8px)" },
+  backBtn:        { background: "none", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 8, padding: "6px 14px", fontSize: 14, cursor: "pointer" },
+  topTitle:       { fontSize: 18, fontWeight: 700, letterSpacing: 2 },
+  /* 预览区 */
+  previewArea:       { padding: "12px 16px", display: "flex", justifyContent: "center" },
+  previewAreaSticky: { padding: "12px 16px", display: "flex", justifyContent: "center", position: "sticky", top: 52, zIndex: 50, background: "linear-gradient(180deg,#0060D0 0%,#0070E8 100%)" },
+  previewContainer:  { position: "relative", width: "100%", maxWidth: 720, userSelect: "none", overflow: "hidden", borderRadius: 10, boxShadow: "0 4px 24px rgba(0,0,0,0.3)" },
+  mainCanvas:        { width: "100%", height: "auto", display: "block" },
+  /* 控制面板 */
+  panel:          { maxWidth: 720, margin: "0 auto", padding: "0 16px" },
+  fieldGroup:     { marginTop: 20 },
+  fieldLabel:     { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 15, fontWeight: 600, marginBottom: 8, letterSpacing: 1 },
+  charCount:      { fontSize: 12, opacity: 0.6, fontWeight: 400 },
+  textarea:       { width: "100%", background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.25)", borderRadius: 10, padding: "12px 14px", color: "#fff", fontSize: 15, lineHeight: 1.6, resize: "vertical", outline: "none", fontFamily: "inherit" },
+  colorRow:       { display: "flex", gap: 12, flexWrap: "wrap" },
+  colorBtn:       { width: 36, height: 36, borderRadius: "50%", cursor: "pointer" },
+  weightBtn:      { background: "rgba(255,255,255,0.12)", border: "2px solid rgba(255,255,255,0.3)", color: "#fff", borderRadius: 10, padding: "6px 18px", fontSize: 14, cursor: "pointer" },
+  weightBtnActive:{ border: "2px solid #FFD700", background: "rgba(255,215,0,0.15)", color: "#FFD700" },
+  /* 贴纸 */
+  stickerRow:     { display: "flex", gap: 8, flexWrap: "wrap" },
+  stickerBtn:     { background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "8px 12px", fontSize: 28, cursor: "pointer" },
+  stickerHint:    { fontSize: 12, opacity: 0.5, marginTop: 6 },
+  deleteHandle:   { position: "absolute", top: "-14px", right: "-14px", width: 24, height: 24, borderRadius: "50%", border: "2px solid #fff", background: "#ff4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", cursor: "pointer", zIndex: 20, touchAction: "none" },
+  /* 导出 */
+  exportBtn:      { width: "100%", marginTop: 28, marginBottom: 20, background: "#FFD700", color: "#1a1a2e", border: "none", borderRadius: 14, padding: "16px 0", fontSize: 18, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(255,215,0,0.35)" },
+  overlay:        { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, background: "rgba(0,0,0,0.88)", display: "flex", alignItems: "center", justifyContent: "center" },
+  overlayInner:   { display: "flex", flexDirection: "column", alignItems: "center", maxWidth: "95vw", maxHeight: "95vh" },
+  overlayTip:     { color: "#fff", fontSize: 14, marginBottom: 12, opacity: 0.8 },
+  overlayImg:     { maxWidth: "95vw", maxHeight: "80vh", borderRadius: 8, boxShadow: "0 8px 40px rgba(0,0,0,0.5)" },
+  overlayClose:   { marginTop: 16, background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", color: "#fff", borderRadius: 10, padding: "10px 40px", fontSize: 16, cursor: "pointer" }
+};
+
+/* ── 4. React 应用 ── */
+
+function App() {
+
+  /* — 状态 — */
+  var _page     = useState("home"),                  page = _page[0],           setPage = _page[1];
+  var _tpl      = useState(0),                       tplIdx = _tpl[0],          setTplIdx = _tpl[1];
+  var _fields   = useState({}),                      fieldValues = _fields[0],  setFieldValues = _fields[1];
+  var _color    = useState(TEXT_COLORS[0].value),     textColor = _color[0],     setTextColor = _color[1];
+  var _weight   = useState(FONT_WEIGHTS[0].value),    fontWeight = _weight[0],   setFontWeight = _weight[1];
+  var _stickers = useState([]),                      placedStickers = _stickers[0], setPlacedStickers = _stickers[1];
+  var _sel      = useState(-1),                      selectedIdx = _sel[0],     setSelectedIdx = _sel[1];
+  var _focus    = useState(false),                   inputFocused = _focus[0],  setInputFocused = _focus[1];
+  var _sticky   = useState(false),                   stickyOn = _sticky[0],     setStickyOn = _sticky[1];
+  var _export   = useState(false),                   exporting = _export[0],    setExporting = _export[1];
+  var _url      = useState(null),                    exportURL = _url[0],       setExportURL = _url[1];
+
+  /* — Refs — */
+  var canvasRef    = useRef(null);   /* 主预览Canvas */
+  var containerRef = useRef(null);   /* 预览外层（用于scrollIntoView） */
+  var innerRef     = useRef(null);   /* 预览内层（用于坐标转换） */
+  var dragRef      = useRef(null);   /* 当前拖拽状态 */
+  var composingRef = useRef(false);  /* IME组词中标记 */
+  var stickersRef  = useRef(placedStickers);
+  stickersRef.current = placedStickers;
+
+  var tpl = TEMPLATES[tplIdx];
+
+  /* — 坐标转换 — */
+  function screenToCanvas(clientX, clientY) {
+    var el = innerRef.current;
+    if (!el) return { x: 0, y: 0 };
+    var r = el.getBoundingClientRect();
+    var sx = tpl.canvasW / r.width;
+    var sy = tpl.canvasH / r.height;
+    return { x: (clientX - r.left) * sx, y: (clientY - r.top) * sy };
+  }
+
+  function canvasToScreen() {
+    var el = innerRef.current;
+    if (!el) return { sx: 1, sy: 1 };
+    var r = el.getBoundingClientRect();
+    return { sx: r.width / tpl.canvasW, sy: r.height / tpl.canvasH };
+  }
+
+  /* — Canvas重绘 — */
+  var redraw = useCallback(function () {
+    var canvas = canvasRef.current;
+    if (!canvas) return;
+    drawBase(canvas.getContext("2d"), tpl, fieldValues, textColor, fontWeight);
+  }, [tpl, fieldValues, textColor, fontWeight]);
+
+  useEffect(function () { if (page === "editor") redraw(); }, [page, redraw]);
+
+  /* — 贴纸选中 → 开启吸顶（不可逆，直到返回首页） — */
+  useEffect(function () { if (selectedIdx >= 0) setStickyOn(true); }, [selectedIdx]);
+
+  /* — 文字输入（兼容IME） — */
+  var updateField = function (fieldId, value) {
+    var field = tpl.fields.find(function (f) { return f.id === fieldId; });
+    if (!field) return;
+    if (!composingRef.current && Array.from(value).length > field.maxChars) {
+      value = Array.from(value).slice(0, field.maxChars).join("");
+    }
+    setFieldValues(function (prev) { var n = Object.assign({}, prev); n[fieldId] = value; return n; });
+  };
+
+  /* — 导出 — */
+  var handleExport = function () {
+    setExporting(true);
+    var off = document.createElement("canvas");
+    off.width = tpl.canvasW;
+    off.height = tpl.canvasH;
+    var ctx = off.getContext("2d");
+    drawBase(ctx, tpl, fieldValues, textColor, fontWeight).then(function () {
+      return drawStickersOnCanvas(ctx, stickersRef.current);
+    }).then(function () {
+      off.toBlob(function (blob) {
+        setExportURL(URL.createObjectURL(blob));
+        setExporting(false);
+      }, "image/png");
+    });
+  };
+
+  var closeExport = function () {
+    if (exportURL) URL.revokeObjectURL(exportURL);
+    setExportURL(null);
+  };
+
+  var goHome = function () {
+    setPage("home");
+    setFieldValues({});
+    setPlacedStickers([]);
+    setSelectedIdx(-1);
+    setStickyOn(false);
+  };
+
+  /* — 贴纸拖拽：鼠标 — */
+  function onStickerMouseDown(idx, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedIdx(idx);
+    var pos = screenToCanvas(e.clientX, e.clientY);
+    var st = stickersRef.current[idx];
+    dragRef.current = { idx: idx, offX: pos.x - st.x, offY: pos.y - st.y };
+
+    function onMove(ev) {
+      var d = dragRef.current;
+      if (!d) return;
+      var p = screenToCanvas(ev.clientX, ev.clientY);
+      var nx = Math.max(0, Math.min(tpl.canvasW, p.x - d.offX));
+      var ny = Math.max(0, Math.min(tpl.canvasH, p.y - d.offY));
+      setPlacedStickers(function (prev) {
+        return prev.map(function (s, i) { return i === d.idx ? Object.assign({}, s, { x: nx, y: ny }) : s; });
+      });
+    }
+    function onUp() {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  /* — 贴纸拖拽：触摸 — */
+  function onStickerTouchStart(idx, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedIdx(idx);
+    if (e.touches.length === 1) {
+      var pos = screenToCanvas(e.touches[0].clientX, e.touches[0].clientY);
+      var st = stickersRef.current[idx];
+      dragRef.current = { idx: idx, offX: pos.x - st.x, offY: pos.y - st.y };
+    }
+  }
+
+  function onStickerTouchMove(idx, e) {
+    e.preventDefault();
+    if (e.touches.length === 1 && dragRef.current) {
+      var d = dragRef.current;
+      var p = screenToCanvas(e.touches[0].clientX, e.touches[0].clientY);
+      var nx = Math.max(0, Math.min(tpl.canvasW, p.x - d.offX));
+      var ny = Math.max(0, Math.min(tpl.canvasH, p.y - d.offY));
+      setPlacedStickers(function (prev) {
+        return prev.map(function (s, i) { return i === d.idx ? Object.assign({}, s, { x: nx, y: ny }) : s; });
+      });
+    }
+  }
+
+  function onStickerTouchEnd(e) {
+    if (e.touches.length === 0) dragRef.current = null;
+  }
+
+  /* — 交互辅助 — */
+  function onContainerClick(e) {
+    if (e.target === innerRef.current || e.target === canvasRef.current) {
+      setSelectedIdx(-1);
+    }
+  }
+
+  function deleteSticker(idx) {
+    setPlacedStickers(function (prev) { return prev.filter(function (_, i) { return i !== idx; }); });
+    setSelectedIdx(-1);
+  }
+
+  function addSticker(s) {
+    var newLen = stickersRef.current.length;
+    setPlacedStickers(function (prev) {
+      return prev.concat([{
+        label: s.label, src: s.src,
+        x: tpl.canvasW / 2, y: tpl.canvasH / 2,
+        size: DEFAULT_STICKER_SIZE, rotation: 0
+      }]);
+    });
+    setSelectedIdx(newLen);
+    setTimeout(function () {
+      if (containerRef.current) containerRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }
+
+  /* ══════════════════════════════════════════════
+   * 渲染
+   * ══════════════════════════════════════════════ */
+
+  /* — 首页 — */
+  if (page === "home") {
+    return h("div", { style: S.page },
+      h("div", { style: S.homeWrap },
+        h("div", { style: S.logoArea },
+          h("img", { src: window.__ASSETS__.logo, style: S.logoImg }),
+          h("h1", { style: S.homeTitle }, "乘客物料自助站"),
+          h("p", { style: S.homeDesc }, "做好准备再出发，gogogo!")
+        ),
+        h("button", { style: S.enterBtn, onClick: function () { setPage("editor"); } }, "进入壁纸封装区")
+      )
+    );
+  }
+
+  /* — 编辑器 — */
+  var children = [];
+
+  /* 顶栏 */
+  children.push(
+    h("div", { key: "topbar", style: S.topBar },
+      h("button", { style: S.backBtn, onClick: goHome }, "\u2190 返回"),
+      h("span", { style: S.topTitle }, "壁纸封装区"),
+      h("div", { style: { width: 60 } })
+    )
+  );
+
+  /* 预览区：Canvas + 贴纸叠加层 */
+  var sc = canvasToScreen();
+  var stickerEls = placedStickers.map(function (st, idx) {
+    var isSel = idx === selectedIdx;
+    var sStyle = {
+      position: "absolute",
+      left: (st.x * sc.sx) + "px",
+      top: (st.y * sc.sy) + "px",
+      transform: "translate(-50%,-50%) rotate(" + (st.rotation || 0) + "deg)",
+      width: ((st.size || DEFAULT_STICKER_SIZE) * sc.sx) + "px",
+      cursor: "grab",
+      zIndex: isSel ? 12 : 10,
+      touchAction: "none",
+      userSelect: "none",
+      WebkitUserSelect: "none"
+    };
+
+    var innerChildren = [
+      h("img", { key: "img", src: st.src, style: { width: "100%", height: "auto", display: "block", pointerEvents: "none" }, alt: st.label, draggable: false })
+    ];
+
+    if (isSel) {
+      sStyle.outline = "2px dashed rgba(255,215,0,0.8)";
+      sStyle.outlineOffset = "4px";
+      sStyle.borderRadius = "4px";
+      innerChildren.push(
+        h("span", {
+          key: "del", style: S.deleteHandle,
+          onClick: function (e) { e.stopPropagation(); deleteSticker(idx); }
+        }, "\u2715")
+      );
+    }
+
+    return h("div", {
+      key: "st-" + idx, style: sStyle,
+      onMouseDown: function (e) { onStickerMouseDown(idx, e); },
+      onTouchStart: function (e) { onStickerTouchStart(idx, e); },
+      onTouchMove: function (e) { onStickerTouchMove(idx, e); },
+      onTouchEnd: onStickerTouchEnd
+    }, h("span", { style: { position: "relative", display: "inline-block" } }, innerChildren));
+  });
+
+  var previewStyle = (stickyOn && !inputFocused) ? S.previewAreaSticky : S.previewArea;
+  children.push(
+    h("div", { key: "preview", ref: containerRef, style: previewStyle },
+      h("div", { ref: innerRef, style: S.previewContainer, onClick: onContainerClick },
+        h("canvas", { ref: canvasRef, width: tpl.canvasW, height: tpl.canvasH, style: S.mainCanvas }),
+        stickerEls
+      )
+    )
+  );
+
+  /* 控制面板 */
+  var panelChildren = [];
+
+  /* 文字字段 */
+  tpl.fields.forEach(function (field) {
+    panelChildren.push(
+      h("div", { key: field.id, style: S.fieldGroup },
+        h("label", { style: S.fieldLabel },
+          field.label,
+          h("span", { style: S.charCount }, Array.from(fieldValues[field.id] || "").length + "/" + field.maxChars)
+        ),
+        h("textarea", {
+          style: S.textarea,
+          rows: field.id === "todo" ? 6 : 3,
+          value: fieldValues[field.id] || "",
+          onChange: function (e) { updateField(field.id, e.target.value); },
+          onCompositionStart: function () { composingRef.current = true; },
+          onCompositionEnd: function (e) { composingRef.current = false; updateField(field.id, e.target.value); },
+          onFocus: function () { setInputFocused(true); },
+          onBlur: function () { setInputFocused(false); }
+        })
+      )
+    );
+  });
+
+  /* 文字颜色 */
+  panelChildren.push(
+    h("div", { key: "colors", style: S.fieldGroup },
+      h("label", { style: S.fieldLabel }, "文字颜色"),
+      h("div", { style: S.colorRow }, TEXT_COLORS.map(function (c) {
+        return h("button", {
+          key: c.id,
+          style: Object.assign({}, S.colorBtn, {
+            background: c.value,
+            border: textColor === c.value ? "3px solid #FFD700" : "2px solid rgba(255,255,255,0.4)",
+            boxShadow: textColor === c.value ? "0 0 8px rgba(255,215,0,0.6)" : "none"
+          }),
+          onClick: function () { setTextColor(c.value); },
+          title: c.label
+        });
+      }))
+    )
+  );
+
+  /* 文字粗细 */
+  panelChildren.push(
+    h("div", { key: "weights", style: S.fieldGroup },
+      h("label", { style: S.fieldLabel }, "文字粗细"),
+      h("div", { style: S.colorRow }, FONT_WEIGHTS.map(function (w) {
+        return h("button", {
+          key: w.id,
+          style: Object.assign({}, S.weightBtn, fontWeight === w.value ? S.weightBtnActive : {}),
+          onClick: function () { setFontWeight(w.value); }
+        }, w.label);
+      }))
+    )
+  );
+
+  /* 贴纸选择 */
+  if (STICKERS.length > 0) {
+    panelChildren.push(
+      h("div", { key: "stickers", style: S.fieldGroup },
+        h("label", { style: S.fieldLabel }, "装饰贴纸"),
+        h("div", { style: S.stickerRow }, STICKERS.map(function (s) {
+          return h("button", {
+            key: s.id, style: S.stickerBtn,
+            onClick: function () { addSticker(s); }
+          }, h("img", { src: s.src, style: { width: 36, height: "auto", display: "block" }, alt: s.label }));
+        })),
+        h("p", { style: S.stickerHint }, "点击添加 \u2192 拖动定位 \u00b7 \u2715 删除")
+      )
+    );
+  }
+
+  /* 导出按钮 */
+  panelChildren.push(
+    h("button", {
+      key: "export",
+      style: Object.assign({}, S.exportBtn, { opacity: exporting ? 0.6 : 1 }),
+      onClick: handleExport,
+      disabled: exporting
+    }, exporting ? "\u23F3 生成中\u2026" : "生成壁纸")
+  );
+
+  children.push(h("div", { key: "panel", style: S.panel }, panelChildren));
+
+  /* 导出全屏预览 */
+  if (exportURL) {
+    children.push(
+      h("div", { key: "overlay", style: S.overlay, onClick: closeExport },
+        h("div", { style: S.overlayInner, onClick: function (e) { e.stopPropagation(); } },
+          h("p", { style: S.overlayTip }, "长按图片保存 / 右键另存为"),
+          h("img", { src: exportURL, style: S.overlayImg, alt: "壁纸" }),
+          h("button", { style: S.overlayClose, onClick: closeExport }, "关闭")
+        )
+      )
+    );
+  }
+
+  return h("div", { style: S.page }, children);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+
+};
+</script>
+</body>
+</html>
